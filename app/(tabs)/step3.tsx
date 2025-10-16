@@ -33,94 +33,122 @@ export default function Step3Screen() {
 
   useEffect(() => {
     if (selectedWord) {
-      const shuffled = shuffleLetters(selectedWord.name);
+      const shuffled = shuffleSafe(selectedWord.name);
       setLetters(shuffled);
-      setTyped([]);
+      setTyped(Array(selectedWord.name.length).fill(""));
       setMessage("");
       setShowHint(false);
       setHintIndex(0);
     }
   }, [selectedWord]);
 
-  const shuffleLetters = (word: string) => {
-    const randomLetters = "abcdefghijklmnopqrstuvwxyz".split("");
-    const wordLetters = word.split("");
-    const combined = [...wordLetters];
-    while (combined.length < 10) {
-      const rand =
-        randomLetters[Math.floor(Math.random() * randomLetters.length)];
-      if (!combined.includes(rand)) combined.push(rand);
-    }
-    return combined.sort(() => Math.random() - 0.5);
+  // 🧩 Безопасное перемешивание, чтобы не получилось исходное слово
+  const shuffleSafe = (word: string): string[] => {
+    const arr = word.split("");
+    let shuffled = [...arr];
+
+    const isSame = (a: string[], b: string[]) =>
+      a.join("") === b.join("") || a.join("") === b.slice().reverse().join(""); // также не даем слово задом наперёд
+
+    do {
+      shuffled = shuffle(arr);
+    } while (isSame(shuffled, arr));
+
+    return shuffled;
   };
+
+  const shuffle = (arr: string[]): string[] =>
+    [...arr].sort(() => Math.random() - 0.5);
 
   const handleSelect = (item: any) => {
     setSelectedWord(item);
     Speech.speak(item.name, { language: "en-US" });
 
-    Animated.spring(scale, {
-      toValue: 1.2,
-      useNativeDriver: true,
-    }).start(() => {
-      Animated.spring(scale, {
-        toValue: 1,
-        useNativeDriver: true,
-      }).start();
-    });
+    Animated.sequence([
+      Animated.spring(scale, { toValue: 1.2, useNativeDriver: true }),
+      Animated.spring(scale, { toValue: 1, useNativeDriver: true }),
+    ]).start();
   };
 
-  const handleLetterPress = (letter: string) => {
+  const handleLetterPress = (letter: string, index: number) => {
     if (!selectedWord) return;
-    const newTyped = [...typed, letter];
-    setTyped(newTyped);
 
-    if (newTyped.join("") === selectedWord.name) {
+    const correctLetters = selectedWord.name.split("");
+    const nextEmpty = typed.findIndex((t) => t === "");
+    if (nextEmpty === -1) return;
+
+    const updated = [...typed];
+    updated[nextEmpty] = letter;
+    setTyped(updated);
+
+    // Если включен режим подсказки
+    if (showHint) {
+      const expectedLetter = correctLetters[nextEmpty];
+      if (letter === expectedLetter) {
+        // Переходим к следующей букве в подсказке
+        moveHandToNextHint(nextEmpty + 1);
+      }
+    }
+
+    if (updated.join("") === selectedWord.name) {
       setMessage("✅ Correct!");
-      setTimeout(() => {
-        nextWord();
-      }, 1000);
-    } else if (newTyped.length === selectedWord.name.length) {
+      setTimeout(nextWord, 1000);
+    } else if (updated.every((ch) => ch !== "")) {
       const newAttempts = attempts + 1;
       setAttempts(newAttempts);
       setMessage("❌ Try again");
-      setTyped([]);
 
-      if (newAttempts >= 3) {
-        setShowHint(true);
-        setMessage("💡 Watch the hint...");
-        startHintAnimation();
-      }
+      setTimeout(() => {
+        setTyped(Array(selectedWord.name.length).fill(""));
+        if (newAttempts >= 3) {
+          setShowHint(true);
+          setMessage("💡 Watch the hint...");
+          moveHandToNextHint(0);
+        }
+      }, 1000);
     }
   };
 
-  const startHintAnimation = async () => {
+  // ✋ Перемещение руки на нужную букву
+  const moveHandToNextHint = (index: number) => {
     const correctLetters = selectedWord.name.split("");
 
-    for (let i = 0; i < correctLetters.length; i++) {
-      const letter = correctLetters[i];
-      const index = letters.findIndex((l) => l === letter);
-      if (index === -1) continue;
-
-      const row = Math.floor(index / 5);
-      const col = index % 5;
-      const x = col * 60 - 120;
-      const y = row * 60;
-
-      Animated.timing(handPos, {
-        toValue: { x, y },
-        duration: 600,
-        easing: Easing.inOut(Easing.ease),
-        useNativeDriver: true,
-      }).start();
-
-      await new Promise((res) => setTimeout(res, 800));
+    if (index >= correctLetters.length) {
+      setHintIndex(0);
+      return;
     }
 
-    setTyped(correctLetters);
-    setMessage("✅ Great!");
-    setTimeout(() => {
-      nextWord();
-    }, 1500);
+    const letter = correctLetters[index];
+
+    // 🔍 Ищем индекс этой конкретной буквы, учитывая, сколько таких уже использовалось
+    const occurrencesBefore = correctLetters
+      .slice(0, index)
+      .filter((l: any) => l === letter).length;
+
+    let count = 0;
+    const targetIndex = letters.findIndex((l, i) => {
+      if (l === letter) {
+        if (count === occurrencesBefore) return true;
+        count++;
+      }
+      return false;
+    });
+
+    if (targetIndex === -1) return;
+
+    const row = Math.floor(targetIndex / 5);
+    const col = targetIndex % 5;
+    const x = col * 60 - 100;
+    const y = row * 60;
+
+    Animated.timing(handPos, {
+      toValue: { x, y },
+      duration: 500,
+      easing: Easing.inOut(Easing.ease),
+      useNativeDriver: true,
+    }).start();
+
+    setHintIndex(index);
   };
 
   const nextWord = () => {
@@ -156,13 +184,11 @@ export default function Step3Screen() {
         </View>
       ) : (
         <View style={styles.wordArea}>
-          <Text style={styles.wordLabel}>{selectedWord.name}</Text>
-
           <View style={styles.typedRow}>
             {typed.map((l, i) => (
-              <Text key={i} style={styles.typedLetter}>
-                {l.toUpperCase()}
-              </Text>
+              <View key={i} style={styles.emptyBox}>
+                <Text style={styles.typedLetter}>{l.toUpperCase()}</Text>
+              </View>
             ))}
           </View>
 
@@ -171,7 +197,7 @@ export default function Step3Screen() {
               {letters.map((letter, i) => (
                 <TouchableOpacity
                   key={i}
-                  onPress={() => handleLetterPress(letter)}
+                  onPress={() => handleLetterPress(letter, i)}
                   style={styles.letterBox}
                 >
                   <Text style={styles.letter}>{letter.toUpperCase()}</Text>
@@ -199,10 +225,7 @@ export default function Step3Screen() {
           <Text style={styles.message}>{message}</Text>
 
           <View style={{ marginTop: 20 }}>
-            <Button
-              title="🔙 Back to Images"
-              onPress={() => setSelectedWord(null)}
-            />
+            <Button title="🔙 Back" onPress={() => setSelectedWord(null)} />
           </View>
         </View>
       )}
@@ -233,11 +256,6 @@ const styles = StyleSheet.create({
   wordArea: {
     alignItems: "center",
   },
-  wordLabel: {
-    fontSize: 24,
-    fontWeight: "bold",
-    marginBottom: 15,
-  },
   lettersContainer: {
     position: "relative",
     marginTop: 20,
@@ -246,6 +264,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "center",
+    maxWidth: 300,
   },
   letterBox: {
     width: 50,
@@ -262,12 +281,23 @@ const styles = StyleSheet.create({
   },
   typedRow: {
     flexDirection: "row",
-    minHeight: 40,
+    minHeight: 50,
+    justifyContent: "center",
+    marginVertical: 10,
+  },
+  emptyBox: {
+    width: 40,
+    height: 40,
+    borderWidth: 2,
+    borderColor: "#007AFF",
+    marginHorizontal: 5,
+    justifyContent: "center",
+    alignItems: "center",
+    borderRadius: 6,
   },
   typedLetter: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: "bold",
-    marginHorizontal: 5,
     color: "#007AFF",
   },
   message: {
@@ -276,7 +306,7 @@ const styles = StyleSheet.create({
   },
   hand: {
     position: "absolute",
-    left: 140,
-    top: -30,
+    left: 120,
+    top: -40,
   },
 });
